@@ -1,0 +1,18 @@
+layout struct header for "MP3" {
+	+0B	sync_words:	byte[3] = 0xFFF;
+	+12b	version:	bit; //TODO: adding smaller datatypes for bit?
+	+13b	layer:		bit[2];
+	+15b	error_pro:	bit;
+	+4B	bit_rate:	byte;
+	+20b	frequency:	bit[2];
+	+22b	padding_bit:	bit;
+	+23b 	private_bit:	bit;
+	+24b	mode:		bit[2];
+	+26b	mode_ext:	bit[2];
+	+28b	copy_bit:	bit;
+	+29b	original_bit:	bit;
+	+31b	emphasis:	bit[2];
+}
+
+layout struct data for "MP3"{
+}

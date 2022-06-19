@@ -1,0 +1,25 @@
+layout struct segment(K: u16, J: u32) for "JPEG" {
+	//TODO: judging from K and J, tell whether certain components exist
+	+0B	marker_head:	byte = 0xFF;
+	+1B	marker_type:	byte;
+	=2B	//TODO: syntax indicating following components are optional
+	
+	+2B	data_len:	byte[2]~=K: //TODO: indicating the first byte high, the second low
+	+4B	data:		byte[K-2];
+	=2B+K	//Total size up until here
+
+	+2B+K	e_data:		byte[J];
+	=2B+K+J
+}
+
+layout struct entropy_padding for "JPEG" {
+	+0B	byte_1:		byte = 0xFF;
+	+1B 	byte_2:		byte = 0x00;
+	=2B
+}
+
+layout struct entropy_data(K: u32) for "JPEG"{
+	padding:	entropy_padding //TODO: show that the struct is used for padding
+	+0B	data:		byte[K];
+	=KB
+}

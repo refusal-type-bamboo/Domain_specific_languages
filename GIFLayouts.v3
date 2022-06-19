@@ -1,0 +1,41 @@
+layout struct img_descriptor for "GIF"{
+	+0B		nw_corner:		byte[4];
+	+4B		wid_hi:			byte[4];
+	+8B		has_CT:			byte;
+	+9B		lzw_size:		byte;
+	+10B		lzw_amount:		byte;
+	=11B
+}
+
+layout struct image(K: u32) for "GIF"{
+	+0B		sentinel:		byte = 0x2C;
+	+1B		descriptor:		img_descriptor;
+	+12B		img_data:		byte[K];
+	+12B + K	img_end_block:		byte = 0x00;
+	=13B + K
+}
+
+layout struct linked_list(K: u32) for "GIF"{
+	//PROPOSE: define datatype link_rule to indicate how the list is linked?
+	link_rule = pack;
+	//Since the blocks are packed, all we need to know is the size 
+	size_location = +0B;
+	//How we could tell the linked list ends
+	end_block = [0x00];
+}
+
+layout struct extension_block for "GIF"{
+	+0B		sentinel:		byte = 0x21;
+	+1B		extension_type:		byte;
+	+2B		sub_blocks:		linked_list[K];
+	=2B + K
+}
+
+//TODO: maybe define a general structure indicating the whole layout of the file?
+filelayout for "GIF"{
+	header = ...
+	components = {
+		...
+	}
+	trailer = ...
+}
