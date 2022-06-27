@@ -1,41 +1,283 @@
-layout struct img_descriptor for "GIF"{
-	+0B		nw_corner:		byte[4];
-	+4B		wid_hi:			byte[4];
-	+8B		has_CT:			byte;
-	+9B		lzw_size:		byte;
-	+10B		lzw_amount:		byte;
-	=11B
-}
-
-layout struct image(K: u32) for "GIF"{
-	+0B		sentinel:		byte = 0x2C;
-	+1B		descriptor:		img_descriptor;
-	+12B		img_data:		byte[K];
-	+12B + K	img_end_block:		byte = 0x00;
-	=13B + K
-}
-
-layout struct linked_list(K: u32) for "GIF"{
-	//PROPOSE: define datatype link_rule to indicate how the list is linked?
-	link_rule = pack;
-	//Since the blocks are packed, all we need to know is the size 
-	size_location = +0B;
-	//How we could tell the linked list ends
-	end_block = [0x00];
-}
-
-layout struct extension_block for "GIF"{
-	+0B		sentinel:		byte = 0x21;
-	+1B		extension_type:		byte;
-	+2B		sub_blocks:		linked_list[K];
-	=2B + K
-}
-
-//TODO: maybe define a general structure indicating the whole layout of the file?
-filelayout for "GIF"{
-	header = ...
-	components = {
-		...
+// General file format for a GIF file
+// Here, we pass in several arguments for initializing the components
+// I suppose that the _filelayout structure should be initialized at the
+// very end, after all other sections are parsed, so that we have the
+// "GCT_count", "images", "extension_blocks" known to us.
+layout struct _filelayout(GCT_count: u32, images: Array<image>
+			  extension_blocks: Array<extension_block>) for "GIF"{
+	def _size(){
+		return hdr._size() + imgs._size() + ext_blocks._size();
 	}
-	trailer = ...
+	+0B			hdr:			header(GCT_count);
+	+hdr._size()		imgs:			image_section(images);
+	+hdr._size() +
+	 imgs._size()		ext_blocks:		extension_section(extension_blocks);
+	=_size();
+}
+
+// Structures related to the header
+// The header always appear at the very beginning of a gif file
+// A global color table may follow the logical screen descriptor
+layout struct header(GCT_count: u32) for "GIF"{
+// Header
+	// TODO: sometimes a component's size can be hard to calculate (at least hard)
+	// to write in a line, so maybe adding a _size() function for each component
+	// and the parser can calculate the size by invoking the _size() function
+	def _size(){
+		return 13B + GCT_count * 3;
+	}
+	// The signature is always "gif"
+	+0B			signature:		byte[3];
+	// The version can be "87a" or "89a"
+	+3B			version:		byte[3];
+// Logical screen descriptor
+	// Width of Display Screen in Pixels 
+	+6B			screen_width		byte[2];
+	// Height of Display Screen in Pixels
+	+8B			screen_height:		byte[2];
+	// Screen and Color Map Information
+	+10B			packed:			byte;
+	// Background Color Index
+	+11B			background_color:	byte;
+	// Pixel Aspect Ration
+	+12B			aspect_ration:		byte;
+	// TODO: indicate that global color table entries are optional
+	+13B			OPT_gct_entries:	byte[GCT_count * 3];
+	=_size();
+}
+
+layout struct global_color_table_entry for "GIF"{
+// Optional global color table that may appear at the end of the header
+// Note that the number of global color table entries is always a power of two, up to 256
+	+0B			red:			byte;
+	+1B			green:			byte;
+	+2B			blue:			byte;
+	=3B
+}
+
+
+// Structures related to a single image
+layout struct local_image_descriptor(LCT_count: u32) for "GIF"{
+// Local image descriptors appear before each section of image data
+	def _size(){
+		return 10B + LCT_count * 3;
+	}
+	// Image descriptor identifier
+	+0B			separator:		byte = 0x2C;
+	// X position of image on the display
+	+1B			left:			byte[2];
+	// Y position of image on the display
+	+3B			top:			byte[2];
+	// Width of the image in pixels
+	+5B			width:			byte[2];
+	// Height of the image in pixels
+	+7B			height:			byte[2];
+	// Image and color table information
+	+9B			packed:			byte;
+	// Local color table
+	+10B			OPT_lct_entries:	byte[LCT_count * 3];
+	=_size();
+}
+
+layout struct local_color_table_entry for "GIF"{
+// Optional local color table that follows the local image descriptor and precedes image data
+	+0B			red:			byte;
+	+1B			green:			byte;
+	+2B			blue:			byte;
+	=3B
+}
+
+layout struct image_sub_block(data_size: u32) for "GIF"{
+	// Each data sub-block begins with a count byte
+	// The value of the count byte may range from 1 to 255 and indicates the number of data bytes in the sub-block
+	+0B			count:			byte;
+	// LZW compressed data
+	// Considering the datat can be decompressed using a LZW decoder directly without further processing,
+	// we call them in general "data", LZW algorithm is not file-format specific
+	+1B			data:			byte[data_size];
+	+1B + data_size 	tailer:			byte = 0x00;
+	=2B + data_size
+}
+
+layout struct data_blocks(data_sizes: Array<u32>) for "GIF"{
+// Each image in a GIF file has an image_data section
+// Image data are compressed using LZW compression (an algorithm not closely related to GIF itself)
+// GIF stores encoded image data as a series of data sub-blocks
+// NOTE: this component is a generic data block structure, it may store image data
+// or plain text data.
+	// TODO: introducing functions to tell the parser how to calculate the size?
+	def sumTo(Array<u32> d_sizes, int index){
+		int sum = 0;
+		for (i = 0; i < index; i++){
+			sum += d_sizes[i];
+		}
+		return sum;
+	}
+	def _size(){
+		return sumTo(data_sizes, data_sizes.length);
+	}
+	// First data block
+	+0B			data_block[0]:		image_sub_block(data_sizes[0] - 2);
+	// TODO: indicate that this is the ith data block
+	+sumTo(data_sizes, i)	data_blcok[i]:		image_sub_block(data_sizes[i] - 2);
+	=_size();
+}
+
+layout struct image(LCT_count: u32, hasLCT: bool, data_sizes: Array<u32>) for "GIF"{
+	def _size(local_img_dptr: local_image_descriptor(LCT_count),
+		  img_data: image_data(data_sizes)){
+		  return local_img_dptr._size() + img_data._size() +
+		  	 if (hasLCT, 3, 0);
+	}
+	+0B			local_img_dptr:		local_image_descriptor(LCT_count);
+	// TODO: if possible, we can let the parser call the _size() functions and calculate
+	// the sizes here instead of specifying them all out
+	+10B + 	...		OPT_local_clr_tb:	local_color_table;
+	+13B + 	...		img_data:		image_data(data_sizes);
+	=_size();
+}
+
+layout struct image_section(images: Array<img>) for "GIF"{
+// In order to conveniently tell the parser there are multiple images packed
+// together to form the image section, we introduce "image_section" component, which is
+// a wrapped image array
+	def _size(){
+		int sum = 0;
+		for (img in images){
+			sum += img._size();
+		}
+		return sum;
+	}
+	// TODO: we may want to introduce a convention to indicate that the elements in images
+	// are stored one after another
+	// OR: alternatively, we may want to let the argument be set after we know how many
+	// images we have in the image section, instead of passing it as an argument beforehand to
+	// the parser
+	+0B			image_0:		image;
+	+image_0._size()	image_1:		image;
+	...
+	=_size();
+}
+
+
+// Layout structures related to extensioin blocks
+// Comment Extension blocks contain human-readable ASCII text embedded in the GIF data stream that is used in a manner similar to program comments in C language code
+// Application Extension blocks allow the storage of data that is understood only by the software application reading the GIF file
+layout struct extension_block for "GIF"{
+// We may want to define an abstract layout structure for others to extend
+	def _size();
+}
+
+layout struct graphics_control_EB for "GIF" extends extension_block{
+	def _size(){
+		return 8;
+	}
+	// Extension Introducer 
+	+0B			introducer:		byte = 0x21;
+	// Graphic Control Label 
+	+1B			label:			byte = 0xF9;
+	// Size of remaining fields
+	+2B			block_size:		byte = 0x04;
+	// Method of graphics disposal to use 
+	+3B			packed:			byte;
+	// Hundredths of seconds to wait
+	+4B			delay_time:		byte[2];
+	// Transparent Color Index
+	+6B			color_index:		byte;
+	// Block Terminator 
+	+7B			terminator:		byte = 0x00;
+	=8B
+}
+
+layout struct plain_text_EB(text_data_sizes: Array<u32>) for "GIF" extends extension_block{
+	def _size(){
+		return 15 + txt_data._size();
+	}
+	// Extension Introducer
+	+0B			introducer		byte = 0x21;
+	// Extensioni Label
+	+1B			label:			byte = 0x01;
+	// Size of extension block
+	+2B			block_size:		byte = 0x0C;
+	// X position of text grid in pixels
+	+3B			text_grid_left:		byte[2];
+	// Y position of text grid in pixels
+	+5B			text_grid_top:		byte[2];
+	// Width of the text grid in pixels
+	+7B			text_grid_width:	byte[2];
+	// Height of the text grid in pixels
+	+9B			text_grid_height:	byte[2];
+	// Width of a grid cell in pixels
+	+11B	 		cell_width:		byte;
+	// Height of a grid cell in pixels
+	+12B			cell_height:		byte;
+	// Text foreground color index value
+	+13B			text_fg:		byte;
+	// Text background color index value
+	+14B			text_bg:		byte;
+	// Plain text data
+	+15B			txt_data:		data_blocks(text_data_sizes);
+	// Terminator
+	+15B + txt_data._size() terminator:		byte = 0x00;
+	=_size();
+}
+
+layout struct application_extension_block(application_data_sizes: Array<u32>)
+	for "GIF" extends extension_block{
+	def _size{
+		return 15 + app_data._size();
+	}
+	// Extension Introducer
+	+0B			introducer		byte = 0x21;
+	// Extension Label
+	+1B			label:			byte = 0xFF;
+	// Size of extension block
+	+2B			block_size:		byte = 0x0B;
+	// Application identifier
+	+3B			identifier:		char[8];
+	// Application Authetication code
+	+11B			authet_code:		byte[3];
+	// Pointer to application data sub_blocks
+	+14B			app_data:		data_blocks(application_data_sizes);
+	// Terminator
+	+14B + app_data._size()	terminator:		byte = 0x00;
+	=_size();
+}
+
+layout struct comment_extension_block(comment_data_sizes: Array<u32>)
+	for "GIF" extends extension_block{
+	def _size{
+		return 3 + cmt_data._size();
+	}
+	// Extension Introducer
+	+0B			introducer		byte = 0x21;
+	// Extension Label
+	+1B			label:			byte = 0xFE;
+	// Pointer to comment data sub_blocks
+	+2B			cmt_data:		data_blocks(comment_data_sizes);
+	// Terminator
+	+2B + cmt_data._size()	terminator:		byte = 0x00;
+	=_size();
+}
+
+layout struct extension_section(extension_blocks: Array<extension_block>) for "GIF"{
+// As mentioned above, it will be much more convenient to indicate a structure
+// in which homogeneous data strucutres are closely packed. As shown in "image_section",
+// we currently define a new layout structure to do so
+	def _size(){
+		int sum = 0;
+		for (ext in extension_blocks){
+			sum += ext._size();
+		}
+		return sum;
+	}
+	// TODO: we may want to introduce a convention to indicate that the elements in images
+	// are stored one after another
+	// OR: alternatively, we may want to let the argument be set after we know how many
+	// images we have in the image section, instead of passing it as an argument beforehand to
+	// the parser
+	+0B			ext_0:			extension_block;
+	+ext_0._size()		ext_1:			extension_block;
+	...
+	=_size();
 }
