@@ -1,0 +1,217 @@
+// Memo for DSL project
+
+//************************************************************************
+// Layouts & structs
+// 1. We define structures with fixed length to be structs
+// e.g.
+struct color{
+	+0B			white:			byte;
+	+1B			red:			byte;
+	+2B			green:			byte;
+	+3B			blue:			byte;
+	=4B
+}
+
+// 2. Structures in which all elements are accessible before reading the
+// content are structs
+// e.g.
+struct LF_block(len: byte){
+// FL_block stands for "length-first block"
+// All parameters are assumed to be known when the struct is intiailized
+// note that though the size of data is not known, it can be accessed without
+// knowing its actual length, so it is a struct
+	+0B			size:			byte[len];
+	+0B + len		data:			byte[size];
+	=0B + len + size;
+}
+
+// 3. Layouts are structures with members at unknown position. Usually their
+// position can only be calculated after reading the content in the struct
+// We usually don't specify the sizes since they will be automatically calculated by
+// the parser.
+// e.g.
+layout header{
+	header:				AachO_Header;
+	segment:			Array<Segment>;
+}
+
+// 4. However, sometimes certain elements' offsets are known, and might be necessary
+// for initialize the layout. Under such circumstances, we would want to specify the
+// offset-known members at the very beginning of the struct
+// e.g.
+layout block{
+	+4B			block_type:		byte;
+	+12B			size:			byte;
+	block_data:					data;
+}
+// We don't need to specify all members with known offset. The only reason to
+// specify some of them is to enable operations in which certain members needs
+// to be known before we read through the whole data region. (e.g. for efficiency)
+
+
+//********************************************************************
+// Case types
+
+// Case types are just cased structs, so whenever they are read and their types
+// are known, they can be treated as structs
+// e.g.
+casetype load_cmd_content(load_cmd_type) for "MachO"{
+	// casetype, for each case, the offsets are known
+	switch (load_cmd_type){
+	case uuid_command:
+	+0B			uuid:				byte[16];
+	=16B
+	case segment_command:
+	+0B			segname:			byte[16];
+	+16B			vmaddr:				int;
+	+20B			vmsize:				int;
+	+24B			fileoff:			int;
+	+28B			filesize:			int;
+	+32B			maxprot:			int;
+	+36B			initprot:			int;
+	+40B			nsects:				int;
+	+44B			flags:				int;
+	=48B
+	case ...
+	....
+	}
+}
+
+//*********************************************************************
+// Related information
+// It is common that in a struct, data stored at one location is related
+// to the number/type/feature of another member in the struct. Following
+// circumstances are possible:
+
+// 1. Length
+// This is the most common situation, the parser first reads the previous byte
+// and has access to the member size, it can be then used when reading block_data
+// e.g.
+	+0B			size:			byte;
+	+1B			block_data:		byte[size];
+
+// 2. Type
+// Similarly, cased types are parameterized, so they are initialized after
+// reading cmd_type
+	+0B			cmd_type:		byte;
+	+1B			segment:		load_command(cmd_type);
+
+// 3. Prerequisites
+// As said before, sometimes the offset of certain elements are known before
+// we read the whole varible-lengthed struct. If necessary, we may specify them
+// at the very beginning instead of write all members sequentially.
+
+// However, all other members should be placed in the correct order.
+// The parser should be able to skip (in this example, byte 8) the known bytes
+// when reading data.
+	+8B			size:			byte;
+	data						byte[size]
+
+// 4. Pointers
+// It is also common to see pointer to other structs/layout/unspecified data
+// we might want to parameterize all pointers with flags indicating whether
+// we want to step in and verify the data written there, or we shall
+// skip it
+	+4B			block_ptr:		Pointer(skip_flag)<Array<int>>
+
+//*********************************************************************
+// Data verfication:
+// 1. It is common that there's only limited valid options for byte/word
+enum cputype{
+	CPU_TYPE_POWERPC,
+	CPU_TYPE_I386,
+}: int;
+
+// 2. Users may also define customized verifiers for a struct/layout
+// Each struct/layout only has one verifier, and contains all requirements
+// e.g.
+layout block{
+	+0B			header:			byte;
+	+1B			block:			Block;
+	verifer(flag){
+	// Users can pass in a flag to indicate when to call the verifiers.
+	// Say, upon iniatilization, each time the layout is modified...
+		header > 5 : handler1;
+		block[0] == 0 : handler2;
+	}
+}
+
+// 3. Handlers may be customized as well. It is possible that we support
+// some default parameterized handlers and let users choose from them
+handler user_handler{
+	...
+}
+
+//*********************************************************************
+// Variable lengthed data:
+// 1. Size is written somewhere (fixed position) in the structure
+// We define the generic layout blockWSize:
+layout BlockWSize(position: byte, len: byte){
+	+position		size:			byte[len];
+}
+// The size is written at the very beginning, 1 byte long
+layout byteSizedString for "GP5" extends blockWSize(0, 1);
+// The size is written at the very beginning, 4 byte long
+layout intSizedString for "GP5" extends blockWSize(0, 4);
+
+// 2. The length is not written, but is 0-or-other-sentinel-terminated
+// We define Xterminated layout:
+layout XTerminated(content: Array<byte>){
+}
+// Zero terminated block
+layout zero_terminated for "GP5" extends Xterminated(Array.new(1));
+
+// 3. The list consists of linked blocks
+layout LinkedList(position: byte, len: byte){
+	// Special sentinel inidicating that this is the end of the linked list
+	end_sentinel = ""
+	+position		pointer_to_next:	byte[len];
+}
+layout linked_blocks for "GP5" extends LinkedList(16, 4);
+
+// 4. It is uncommon to change the type of a block (not seen yet), so
+// I think only defining length-modify methods is fine
+// For each of the types mentioned above, we can equip them with some 
+// basic operations
+// e.g.
+layout BlockWSize(position: byte, len: byte){
+	+position		size:			byte[len];
+	def change_size(new_size: Array<byte>){
+		write(position, Array<byte>);
+	}
+}
+
+layout XTerminated(content: Array<byte>){
+	def extend(data: Array<byte>){
+		// Pseudocode for proceeding to the end of the block
+		while (parser.readBytes(content.length()) != content){
+			parser.readByte();
+		}
+		// Pseudocode for writing the content
+		write(parser.pos, Array<byte>);
+		// Write the terminator
+		write(parser.pos, content);
+	}
+}
+// Those methods are not user defined, so the layouts themselves can remain
+// light-weighted
+
+
+//*********************************************************************
+// Other (purposed) conventions
+// For each file, a general file format layout "_fileLayout" is required, so the
+// parser knows where to step in the file.
+// Ideally, parsing the "_fileLayout" is the only "function call" to make, all
+// other calls are sequential parsing requests for subcomponents.
+layout _fileLayout for "MachO"{
+	header				Macho_Header;
+	...
+}
+
+// For the convenience of the users, we may want to include the "typedefs" in the
+// layout formats
+typedef cput_type int;
+typedef CPU_TYPE_POWERPC 1;
+
+// File formats requiring parallel/non-sequential parsing are not seen yet. So
+// I guess a sequential parser is good enough.

@@ -1,0 +1,68 @@
+// 1. Fixed sized struct, nothing special, only thing todo is
+// to include excpetion handlers
+struct mach_header() for "MachO"{
+	// Header does not include variable lengthed components,
+	// so it is a struct
+	+0B			magic_number:			int;
+	+4B			cputype:			int;
+	// As for everparse3D, enum is inlcuded in the struct for the
+	// parser to check whether this field is valid
+	enum cputype(int){
+		CPU_TYPE_POWERPC,
+		CPU_TYPE_I386,
+		// If the constraints for this field is not satsified,
+		// the exception handler is called
+		def exp_handler(){
+			// Raising excpetion / reporting error
+			....
+		}
+		// Or alternatively, user can choose from a number of
+		// default exception handlers, which might be more memory
+		// efficient
+		EXP_HDL = 0;
+	}
+	+8B			cpusubtype:			int;
+	+12B			filetype:			int;
+	+16B			ncmds:				int;
+	+20B			sizecmds:			int;
+	+24B			flags:				int;
+	=28B
+}
+
+
+layout load_command() for "MachO"{
+	// Load commands are not fixed sized, so they are called layouts
+	// Layouts members are not directly accessible when they are initialized
+	// Ideally, the parser reads through the whole chunk of memory to parse the
+	// sub-structs and sub-layouts, then writing the size offsets of the parent
+	cmd				int;
+	cmdsize:			int;
+	// ***The type of the command is specified in cmd, so when given cmd
+	// as the parameter, the parser can automatically lod the corresponding case
+	// type
+	command_content:		load_cmd_content(cmd);
+}
+
+// Case types are just cased structs, so whenever they are read and their types
+// are known, they can be treated as primitive types
+casetype load_cmd_content(load_cmd_type) for "MachO"{
+	// casetype, for each case, the offsets are known
+	switch (load_cmd_type){
+	case uuid_command:
+	+0B			uuid:				byte[16];
+	=16B
+	case segment_command:
+	+0B			segname:			byte[16];
+	+16B			vmaddr:				int;
+	+20B			vmsize:				int;
+	+24B			fileoff:			int;
+	+28B			filesize:			int;
+	+32B			maxprot:			int;
+	+36B			initprot:			int;
+	+40B			nsects:				int;
+	+44B			flags:				int;
+	=48B
+	case ...
+	....
+	}
+}

@@ -1,24 +1,17 @@
 // General file format for a GuitarPro5 file
-layout struct _filelayout() for "GP5"{
-	def array_size(cda: Array<chord_diagram>){
-		int sum = 0;
-		for (cd in cda){
-			sum += cd._size();
-		}
-		return sum;
-	}
-	def _size(){
-		return header._size() + body._size() + 4 + array_size(chord_diagrams);
-	}
-	+0B			header:				Header;
+// Structure containing varible-lengthed compoenents are called layouts
+// The offsets are calculated after parsing the variable lengthed components
+layout  _filelayout() for "GP5"{
+	__			header:				Header;
 	__			body:				Body;
 	__			chord_diagram_count:		int;
 	__			chord_diagrams:			Array<chord_diagram>;
-	=_size();
 }
 
-layout struct GPcolor for "GP5"{
+//Fixed sized structs are the simplest structures, no modification required
+struct GPcolor for "GP5"{
 // Color component in GP5
+	// Constraints are check when the bianry is parsed
 	+0B			white:				byte = 0x00;
 	+1B			red:				byte;
 	+2B			green:				byte;
@@ -26,43 +19,29 @@ layout struct GPcolor for "GP5"{
 	=4B
 }
 
-layout struct byteSizeString(K: u32) for "GP5"{
-// TODO: GP string is a special primitive type, maybe add a syntax
-// for defining file-specific primitive types
-	def _size(){
-		return K + 1;
-	}
-	+0B			size:				byte = K;
-	+1B			chars:				char[K];
-	=_size();
+// *** LF_block (for length-first block) is a generic data structure
+// for all data formats. The first [length_byte] bytes indicates the size
+// of the whole block
+// Since len (size of length) is given when the block is initialized, the block does not
+// contain component with unkown size, so is therefore considered a struct
+struct LF_block(len: byte) {
+	+0B			size:				byte[len];
+	+0B + b_l		data:				byte[size];
+	=0B + size + len;
 }
 
-layout struct intSizeString(K: u32) for "GP5"{
-	def _size(){
-		return K + 4;
-	}
- = K;
-	+1B			chars:				char[K];
-	=_size();
-}
+// We no longer need to redefine byteSizedString, since it's just a LF_block
+// with 1 byte indicating the size
+typedef byteSizedString for "GP5" LF_block(1);
+// Similarly, the int sized string is a LF_block with the first four byte indicating hte
+// size
+typedef intSizedString for "GP5" LF_block(4);
 
 
 // Layout structures related to header
-layout struct piece_information for "GP5"{
-	def _size(){
-		int sum = 0;
-		// TODO: We may want define special methods to traverse through all components
-		// in a structure to allow convenient check of size
-		// ALTERNATIVELY: _size() of a structrure is by default calculate in that way
-		for (cmpnt: header.component){
-			sum += cmpnt._size();
-		}
-		return _size();
-	}
-	+0B			title:				byteSizedString;
+layout piece_information for "GP5"{
 	// Again, we don't know the precies location of each string, and
-	// it will be redundant if we specify all parameters, the best practice seems
-	// to be let the parser call _size() for each component and then compute the offset
+	// it will be redundant if we specify all parameters
 	__			subtitle:			byteSizedString;
 	__			interpret:			byteSizedString;
 	__			album:				byteSizedString;
@@ -71,20 +50,17 @@ layout struct piece_information for "GP5"{
 	__			tablature_author:		byteSizedString;
 	__			instructional_line:		byteSizedString;
 	__			notes_cnt:			int = notes_count;
+	// The number of notes is known, so the parser can go on reading byteSized strings
+	// without issue
 	__			notes:				byteSizedString[notes_count];
-	=_size();
 }
 
-layout struct lyric_line for "GP5"{
+struct lyric_line for "GP5"{
 // A signle lyric line
-	def _size(){
-		return starting_measure + str._size();
-	}
 	// The starting measure of the lyric line
 	+0B			starting_measure:		int;
 	// The text of the line of lyrics
 	+4B			str:				byteSizedString;
-	=_size();
 }
 
 layout struct lyrics for "GP5"{

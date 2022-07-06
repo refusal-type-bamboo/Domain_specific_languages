@@ -96,7 +96,7 @@ layout struct image_sub_block(data_size: u32) for "GIF"{
 	// we call them in general "data", LZW algorithm is not file-format specific
 	+1B			data:			byte[data_size];
 	+1B + data_size 	tailer:			byte = 0x00;
-	=2B + data_size
+	=2B + data_size;
 }
 
 layout struct data_blocks(data_sizes: Array<u32>) for "GIF"{
